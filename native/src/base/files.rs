@@ -1,11 +1,11 @@
 use std::ffi::CStr;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use libc::{c_char, mode_t, EEXIST, ENOENT, O_CLOEXEC, O_PATH};
+use libc::{c_char, c_uint, mode_t, EEXIST, ENOENT, O_CLOEXEC, O_PATH};
 
 use crate::{bfmt_cstr, errno, xopen};
 
-mod unsafe_impl {
+pub mod unsafe_impl {
     use std::ffi::CStr;
 
     use libc::c_char;
@@ -23,11 +23,22 @@ mod unsafe_impl {
 
     #[no_mangle]
     unsafe extern "C" fn canonical_path(path: *const c_char, buf: *mut u8, bufsz: usize) -> isize {
-        super::canonical_path(CStr::from_ptr(path), slice_from_ptr_mut(buf, bufsz))
+        super::realpath(CStr::from_ptr(path), slice_from_ptr_mut(buf, bufsz))
     }
 }
 
 pub fn __open_fd_impl(path: &CStr, flags: i32, mode: mode_t) -> Option<OwnedFd> {
+    unsafe {
+        let fd = libc::open(path.as_ptr(), flags, mode as c_uint);
+        if fd >= 0 {
+            Some(OwnedFd::from_raw_fd(fd))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn __xopen_fd_impl(path: &CStr, flags: i32, mode: mode_t) -> Option<OwnedFd> {
     let fd = xopen(path.as_ptr(), flags, mode);
     if fd >= 0 {
         unsafe { Some(OwnedFd::from_raw_fd(fd)) }
@@ -46,6 +57,16 @@ macro_rules! open_fd {
     };
 }
 
+#[macro_export]
+macro_rules! xopen_fd {
+    ($path:expr, $flags:expr) => {
+        crate::__xopen_fd_impl($path, $flags, 0)
+    };
+    ($path:expr, $flags:expr, $mode:expr) => {
+        crate::__xopen_fd_impl($path, $flags, $mode)
+    };
+}
+
 pub fn readlink(path: &CStr, data: &mut [u8]) -> isize {
     unsafe { unsafe_impl::read_link(path.as_ptr(), data.as_mut_ptr(), data.len()) }
 }
@@ -57,7 +78,7 @@ pub fn fd_path(fd: RawFd, buf: &mut [u8]) -> isize {
 }
 
 // Inspired by https://android.googlesource.com/platform/bionic/+/master/libc/bionic/realpath.cpp
-pub fn canonical_path(path: &CStr, buf: &mut [u8]) -> isize {
+pub fn realpath(path: &CStr, buf: &mut [u8]) -> isize {
     if let Some(fd) = open_fd!(path, O_PATH | O_CLOEXEC) {
         let mut st1: libc::stat;
         let mut st2: libc::stat;
