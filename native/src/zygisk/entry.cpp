@@ -161,8 +161,10 @@ static vector<int> get_module_fds(bool is_64_bit) {
 }
 
 static bool get_exe(int pid, char *buf, size_t sz) {
-    ssprintf(buf, sz, "/proc/%d/exe", pid);
-    return xreadlink(buf, buf, sz) > 0;
+    char exe[128];
+    if (ssprintf(exe, sizeof(exe), "/proc/%d/exe", pid) < 0)
+        return false;
+    return xreadlink(exe, buf, sz) > 0;
 }
 
 static pthread_mutex_t zygiskd_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -304,6 +306,8 @@ static void get_process_info(int client, const sock_cred *cred) {
     int manager_app_id = get_manager();
     if (to_app_id(uid) == manager_app_id) {
         flags |= PROCESS_IS_MAGISK_APP;
+    } else if (to_app_id(uid) == sys_ui_app_id) {
+        flags |= PROCESS_IS_SYS_UI;
     }
     if (denylist_enforced) {
         flags |= DENYLIST_ENFORCING;
