@@ -6,8 +6,8 @@ import android.content.pm.PackageManager
 import com.topjohnwu.magisk.BuildConfig
 import com.topjohnwu.magisk.core.Config
 import com.topjohnwu.magisk.core.data.magiskdb.PolicyDao
+import com.topjohnwu.magisk.core.ktx.getPackageInfo
 import com.topjohnwu.magisk.core.model.su.SuPolicy
-import com.topjohnwu.magisk.ktx.getPackageInfo
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,31 +57,36 @@ class SuRequestHandler(
             runCatching { output.close() }
     }
 
-    private suspend fun init(intent: Intent) = withContext(Dispatchers.IO) {
+    private suspend fun init(intent: Intent): Boolean {
+        val uid = intent.getIntExtra("uid", -1)
+        if (uid <= 0) {
+            return false;
+        }
+        policy = SuPolicy(uid)
+        val pid = intent.getIntExtra("pid", -1)
+        if (pid <= 0) {
+            return false;
+        }
+        val fifo = intent.getStringExtra("fifo") ?: "/dev/socket/magisk_su_request_$pid"
+
         try {
-            val fifo = intent.getStringExtra("fifo") ?: throw IOException("fifo == null")
             output = DataOutputStream(FileOutputStream(fifo))
-            val uid = intent.getIntExtra("uid", -1)
-            if (uid <= 0) {
-                throw IOException("uid == $uid")
-            }
-            policy = SuPolicy(uid)
-            val pid = intent.getIntExtra("pid", -1)
             try {
                 pkgInfo = pm.getPackageInfo(uid, pid) ?: PackageInfo().apply {
                     val name = pm.getNameForUid(uid) ?: throw PackageManager.NameNotFoundException()
                     // We only fill in sharedUserId and leave other fields uninitialized
                     sharedUserId = name.split(":")[0]
                 }
-                return@withContext true
             } catch (e: PackageManager.NameNotFoundException) {
+                Timber.e(e)
                 respond(SuPolicy.DENY, -1)
-                return@withContext false
+                return false
             }
+            return true
         } catch (e: IOException) {
             Timber.e(e)
             close()
-            return@withContext false
+            return false
         }
     }
 

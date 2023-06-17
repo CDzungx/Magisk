@@ -1,6 +1,7 @@
 #include <mincrypt/sha.h>
 #include <base.hpp>
 
+#include "boot-rs.hpp"
 #include "magiskboot.hpp"
 #include "compress.hpp"
 
@@ -24,8 +25,7 @@ Supported actions:
     a file with its corresponding file name in the current directory.
     Supported components: kernel, kernel_dtb, ramdisk.cpio, second,
     dtb, extra, and recovery_dtbo.
-    By default, each component will be automatically decompressed
-    on-the-fly before writing to the output file.
+    By default, each component will be decompressed on-the-fly.
     If '-n' is provided, all decompression operations will be skipped;
     each component will remain untouched, dumped in its original format.
     If '-h' is provided, the boot image header information will be
@@ -45,6 +45,14 @@ Supported actions:
     If '-n' is provided, all compression operations will be skipped.
     If env variable PATCHVBMETAFLAG is set to true, all disable flags in
     the boot image's vbmeta header will be set.
+
+  extract <payload.bin> [partition] [outfile]
+    Extract [partition] from <payload.bin> to [outfile].
+    If [outfile] is not specified, then output to '[partition].img'.
+    If [partition] is not specified, then attempt to extract either
+    'init_boot' or 'boot'. Which partition was chosen can be determined
+    by whichever 'init_boot.img' or 'boot.img' exists.
+    <payload.bin> can be '-' to be STDIN.
 
   hexpatch <file> <hexpattern1> <hexpattern2>
     Search <hexpattern1> in <file>, and replace it with <hexpattern2>
@@ -78,8 +86,6 @@ Supported actions:
         Create ramdisk backups from ORIG
       restore
         Restore ramdisk from ramdisk backup stored within incpio
-      sha1
-        Print stock boot SHA1 if previously backed up in ramdisk
 
   dtb <file> <action> [args...]
     Do dtb related actions to <file>
@@ -154,8 +160,8 @@ int main(int argc, char *argv[]) {
         unlink(DTB_FILE);
     } else if (argc > 2 && action == "sha1") {
         uint8_t sha1[SHA_DIGEST_SIZE];
-        auto m = mmap_data(argv[2]);
-        SHA_hash(m.buf, m.sz, sha1);
+        mmap_data m(argv[2]);
+        SHA_hash(m.buf(), m.sz(), sha1);
         for (uint8_t i : sha1)
             printf("%02x", i);
         printf("\n");
@@ -196,11 +202,17 @@ int main(int argc, char *argv[]) {
     } else if (argc > 4 && action == "hexpatch") {
         return hexpatch(argv[2], argv[3], argv[4]);
     } else if (argc > 2 && action == "cpio"sv) {
-        if (cpio_commands(argc - 2, argv + 2))
+        if (!rust::cpio_commands(argc - 2, argv + 2))
             usage(argv[0]);
     } else if (argc > 3 && action == "dtb") {
         if (dtb_commands(argc - 2, argv + 2))
             usage(argv[0]);
+    } else if (argc > 2 && action == "extract") {
+        return rust::extract_boot_from_payload(
+                argv[2],
+                argc > 3 ? argv[3] : nullptr,
+                argc > 4 ? argv[4] : nullptr
+                ) ? 0 : 1;
     } else {
         usage(argv[0]);
     }
